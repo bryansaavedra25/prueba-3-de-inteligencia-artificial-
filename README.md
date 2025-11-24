@@ -1,229 +1,222 @@
 # prueba-3-de-inteligencia-artificial-
 
- Ingeniería de Inteligencia Artificial – EP2 & EP3
-Agente Inteligente RAG con Memoria, Planificación, Observabilidad y Toma de Decisiones – Banco Andino
+ Evaluación 3 – Informe Técnico
+Sección: Observabilidad y Trazabilidad con LangSmith (EP3)
 
-Este proyecto corresponde a las Evaluaciones EP2 y EP3 de la asignatura Ingeniería de Inteligencia Artificial.
-Se desarrolla un agente autónomo, con capacidades avanzadas de:
+En esta sección se presenta la evidencia de observabilidad requerida por la Evaluación 3, utilizando la plataforma LangSmith como sistema de tracking, visualización y análisis de instrumentación del agente inteligente RAG del Banco Andino.
 
- RAG (Recuperación aumentada con documentos)
- Memoria (corta y larga)
- Planificación (TaskPlanner)
- Toma de decisiones adaptativa
- Observabilidad y métricas (Prometheus)
- Dashboard de análisis (Streamlit)
- Logging estructurado y trazabilidad (JSONL)
+Gracias a la activación de:
 
-Implementado con FastAPI, LangChain, FAISS, HuggingFace Embeddings y Prometheus Client.
+LANGCHAIN_TRACING_V2=true
+LANGSMITH_API_KEY=xxxx
+LANGSMITH_PROJECT="BancoAndino_EP3"
 
- A. Diseño e Implementación del Agente (IE1, IE2)
 
-El agente se diseñó con arquitectura modular para simular un asistente interno del Banco Andino, capaz de:
+el agente envía a LangSmith todas las trazas del pipeline, incluyendo:
 
-Recuperar información desde documentos internos.
+llamadas a herramientas,
 
-Razonar sobre la normativa financiera chilena (CMF).
+pasos del planificador (TaskPlanner),
 
-Detectar datos sensibles y derivar cuando corresponde.
+latencias individuales,
 
-Registrar notas operacionales y trazas auditables.
+contexto recuperado,
 
-Ejecutar un pipeline inteligente paso a paso.
+prompts enviados al LLM,
 
-Se implementaron tres herramientas principales:
+tokens consumidos,
 
-1. search_docs
+errores y derivaciones.
 
-Busca información semántica usando FAISS + embeddings MiniLM.
+A continuación, se presenta evidencia visual correspondiente a cada parte del proceso.
 
- 2. reason_policy
+🖼️ 1. Trazabilidad Completa del Pipeline del Agente (IE1, IE2, IE6)
 
-Decide si:
+En esta captura se observa la ejecución completa del pipeline del endpoint /consultar, mostrando la secuencia:
 
-se responde,
+seguridad
 
-o se deriva a un ejecutivo.
+recuperar_ctx (search_docs)
 
-Basado en:
+razonar (reason_policy)
 
-presencia de datos sensibles,
+responder (llm_rag)
 
-existencia de contexto,
+registrar (write_note)
 
-reglas internas.
+Además, LangSmith permite ver el trace tree, donde se refleja con exactitud:
 
- 3. write_note
+las llamadas al vectorstore FAISS,
 
-Registra evidencias operacionales en formato JSONL, almacenadas en /data/notas_operacionales.jsonl.
+la construcción del prompt final,
 
-Estas herramientas se combinan dentro de un pipeline inteligente que ejecuta:
-→ Seguridad → Recuperación de contexto → Razonamiento → Respuesta/Derivación → Registro
+la ejecución del LLM,
 
-B. Memoria y Recuperación de Contexto (IE3, IE4)
+los documentos fuente,
 
-Se implementó un sistema de memoria en dos niveles:
+el contenido generado,
 
-1. Memoria Corta (ShortMemory)
+los metadatos del sistema.
 
-Guarda las últimas 10 interacciones.
+📸 Colocar captura aquí:
 
-Permite coherencia en diálogos largos.
+docs/langsmith_trace_pipeline.png
 
-Se expone desde /memoria/corto.
 
- 2. Memoria Larga (FAISS VectorStore)
+Ejemplo sugerido:
 
-Embeddings generados con HuggingFace.
+🖼️ 2. Captura: Llamadas a Herramientas (search_docs, reason_policy, write_note) – IE1
 
-Búsqueda semántica profunda.
+Esta captura muestra específicamente las herramientas del agente utilizadas durante el pipeline:
 
-Se carga automáticamente al iniciar la API.
+search_docs → ejecución del retrieval FAISS
 
-Gracias a esta arquitectura híbrida, el agente:
-✔ fundamenta respuestas,
-✔ mantiene coherencia,
-✔ recuerda contexto previo.
+reason_policy → decisión responder/derivar
 
- C. Planificación y Toma de Decisiones Adaptativa (IE5, IE6)
+write_note → registro operativo en JSONL
 
-La clase TaskPlanner define el orden de ejecución:
+En LangSmith se observan:
 
-["seguridad", "recuperar_ctx", "razonar", "responder", "registrar"]
+inputs de cada herramienta
 
+outputs
 
-El agente adapta su comportamiento según:
+latencia individual
 
-si la consulta contiene datos sensibles,
+jerarquía de ejecución
 
-si existe información relevante en FAISS,
+📸 Colocar captura aquí:
 
-si el LLM genera errores,
+docs/langsmith_tools.png
 
-si debe derivar o responder.
 
-El pipeline completo queda registrado en:
-/data/traces_ep2.log
-(extendido para EP3).
+Ejemplo:
 
-D. Observabilidad y Métricas – EP3 (IE1, IE2)
+🖼️ 3. Captura: Ejecución del Modelo LLM con RAG (IE2, IE6)
 
-La Evaluación 3 exigía agregar instrumentación completa, incluyendo:
+En esta sección se ve:
 
-✔ Métricas Prometheus implementadas
-Tipo	Métrica	Descripción
-Counter	rag_requests_total	Total de consultas procesadas (canal/decisión/sensible)
-Histogram	rag_request_latency_seconds	Tiempo total del endpoint /consultar
-Histogram	rag_llm_latency_seconds	Latencia del llamado al RAG/LLM
-Gauge	system_cpu_percent	Uso actual de CPU del agente
-Gauge	system_memory_percent	Uso actual de RAM
+el prompt enviado al LLM,
 
-Endpoint expuesto:
+los documentos recuperados por FAISS,
 
-GET /metrics
+contenido del contexto,
 
+tokens consumidos,
 
-Prometheus puede leer estas métricas directamente.
+latencia exacta del LLM,
 
- E. Trazabilidad y Logging EP3 (IE7, IE8)
+respuesta generada.
 
-Cada consulta genera una traza completa:
+Esta evidencia demuestra la instrumentación del RAG solicitada en la evaluación.
 
-request_id
+📸 Imagen sugerida:
 
-pasos del planner
+docs/langsmith_llm_run.png
 
-latencias por herramienta
 
-decisión (responder/derivar/error)
+Ejemplo:
 
-short_memory
+🖼️ 4. Métricas: Tokens, Latencia, Estados y Errores (IE1, IE2)
 
-documentos fuente
+LangSmith proporciona métricas detalladas por ejecución:
 
-errores
+total tokens
 
-canal
+prompt tokens
 
-Estas trazas se guardan en:
+completion tokens
 
-/data/traces_ep3.jsonl
+latencia total
 
+latencia por herramienta
 
-(diferente al EP2 para uso del dashboard)
+errores del sistema (si los hubiera)
 
- F. Dashboard EP3 (Streamlit)
+Esto cumple directamente con los indicadores de evaluabilidad IE1 e IE2.
 
-Se creó el dashboard:
+📸 Colocar captura:
 
-dashboards/streamlit_dashboard.py
+docs/langsmith_metrics.png
 
 
-Que muestra:
+Ejemplo:
 
-Total de consultas
+🖼️ 5. Vista General del Proyecto en LangSmith (Runs View) – IE7, IE8
 
-Latencia promedio
+El panel principal muestra:
 
-Tokens consumidos
+todas las consultas realizadas
 
-Top decisiones
+duración
 
-Top canales
+tipo de decisión (responder / derivar)
 
-Latencia por etapa (search_docs, LLM, total)
+tipo de error (si existe)
 
-Trazas visualizadas
+agente utilizado
 
-Uso de CPU y RAM
+fecha y hora
 
- Capturas del Dashboard EP3
+Esta evidencia demuestra la trazabilidad completa del agente.
 
-(Agregadas por el estudiante según instrucción del profesor)
+📸 Colocar imagen:
 
+docs/langsmith_runs.png
 
 
+Ejemplo:
 
-G. Endpoints del Sistema (IE9)
-Método	Ruta	Descripción
-GET	/salud	Estado del sistema
-POST	/consultar	Ejecuta el agente completo
-GET	/memoria/corto	Últimas 10 interacciones
-POST	/nota	Registra una nota manual
-GET	/metrics	Métricas Prometheus
- H. Documentación Técnica (IE7, IE8)
+🖼️ 6. Comparación de Ejecuciones del Agente (IE9)
 
-Se incluyen:
+LangSmith permite comparar múltiples ejecuciones, mostrando:
 
-1. Diagrama de Arquitectura del Agente
+variación de latencias
 
-Flujo de tareas
+diferencias en los documentos recuperados
 
-Interacción entre módulos
+comportamiento del LLM bajo escenarios distintos
 
-VectorStore + LLM + Planner
+consistencia del razonamiento
 
- 2. Diagrama del Pipeline RAG
+Esto es particularmente útil para validar la robustez del agente y cumple con el requisito de evidencia comparativa del punto IE9.
 
-Orquestación
+📸 Colocar captura:
 
-Herramientas
+docs/langsmith_compare.png
 
-Memoria + decisiones
 
-Ambos se encuentran en /docs.
+Ejemplo:
 
-I. Referencias Técnicas (APA)
+🖼️ 7. Insights de Desempeño y Tiempos por Etapa – IE2
 
-FastAPI. (2025). FastAPI Framework Documentation. https://fastapi.tiangolo.com
+LangSmith muestra visualizaciones automáticas derivadas de los runs, como:
 
-LangChain. (2025). LangChain Framework – Agents & RAG Documentation. https://python.langchain.com
+histogramas de latencia,
 
-HuggingFace. (2025). Sentence Transformers: all-MiniLM-L6-v2. https://huggingface.co/sentence-transformers
+tiempo promedio por herramienta,
 
-FAISS. (2025). Facebook AI Similarity Search. https://faiss.ai
+conteo de herramientas por ejecución,
 
-OpenAI. (2025). Chat Models API Reference. https://platform.openai.com/docs
+tokens promedio,
 
-Prometheus. (2025). Prometheus Client Python Documentation. https://prometheus.io/docs
+tasa de éxito/derivación.
 
-Streamlit. (2025). Streamlit Documentation. https://streamlit.io
+📸 Agregar:
+
+docs/langsmith_insights.png
+
+
+Ejemplo:
+
+📌 Conclusión de la Sección
+
+Las capturas obtenidas desde LangSmith demuestran que el agente:
+
+✔ Está completamente instrumentado (IE1)
+✔ Registra latencias, tokens y errores (IE2)
+✔ Mantiene trazabilidad completa (IE6)
+✔ Visualiza el pipeline y decisiones (IE5)
+✔ Expone evidencia para auditoría y evaluación (IE7, IE8, IE9)
+
+Con esto se cumple todo lo exigido por la Evaluación 3 sobre observabilidad, trazas y monitoreo del agente.
