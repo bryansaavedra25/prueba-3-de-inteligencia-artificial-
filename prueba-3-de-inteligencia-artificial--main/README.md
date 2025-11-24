@@ -1,3 +1,5 @@
+# prueba-3-de-inteligencia-artificial-
+
  Ingeniería de Inteligencia Artificial – EP2 & EP3
 Agente Inteligente RAG con Memoria, Planificación, Observabilidad y Toma de Decisiones – Banco Andino
 
@@ -210,17 +212,7 @@ Memoria + decisiones
 
 Ambos se encuentran en /docs.
 
- I. Redacción Técnica (IE10)
-
-El proyecto cumple:
-
-✔ Redacción técnica formal
-✔ Comentarios claros en el código
-✔ Notación consistente
-✔ Buenas prácticas de seguridad
-✔ Formato APA en referencias
-
-J. Referencias Técnicas (APA)
+I. Referencias Técnicas (APA)
 
 FastAPI. (2025). FastAPI Framework Documentation. https://fastapi.tiangolo.com
 
