@@ -7,7 +7,6 @@ import logging
 import uuid
 import json
 from datetime import datetime
-# +++ NUEVAS IMPORTACIONES PARA OBSERVABILIDAD Y METRICAS +++
 import time
 import psutil
 from prometheus_client import Counter, Histogram, Gauge
