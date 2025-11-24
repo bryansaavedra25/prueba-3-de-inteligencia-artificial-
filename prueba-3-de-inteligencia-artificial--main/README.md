@@ -4,13 +4,13 @@ Agente Inteligente RAG con Memoria, Planificación, Observabilidad y Toma de Dec
 Este proyecto corresponde a las Evaluaciones EP2 y EP3 de la asignatura Ingeniería de Inteligencia Artificial.
 Se desarrolla un agente autónomo, con capacidades avanzadas de:
 
-✔ RAG (Recuperación aumentada con documentos)
-✔ Memoria (corta y larga)
-✔ Planificación (TaskPlanner)
-✔ Toma de decisiones adaptativa
-✔ Observabilidad y métricas (Prometheus)
-✔ Dashboard de análisis (Streamlit)
-✔ Logging estructurado y trazabilidad (JSONL)
+ RAG (Recuperación aumentada con documentos)
+ Memoria (corta y larga)
+ Planificación (TaskPlanner)
+ Toma de decisiones adaptativa
+ Observabilidad y métricas (Prometheus)
+ Dashboard de análisis (Streamlit)
+ Logging estructurado y trazabilidad (JSONL)
 
 Implementado con FastAPI, LangChain, FAISS, HuggingFace Embeddings y Prometheus Client.
 
