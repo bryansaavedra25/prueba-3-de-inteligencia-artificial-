@@ -1,0 +1,11 @@
+%% docs/diagrama_orquestacion.mmd
+graph TD
+    U[Usuario] --> A[FastAPI /consultar]
+    A --> P[TaskPlanner]
+    P --> S[Seguridad]
+    S --> C{Sensibles?}
+    C -- Sí --> D[Derivar]
+    C -- No --> R[Retriever FAISS]
+    R --> L[LLM (ChatOpenAI) + RetrievalQA]
+    L --> W[write_note JSONL]
+    L --> O[Respuesta]

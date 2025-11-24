@@ -1,0 +1,23 @@
+### tests/smoke.http (para extensión REST Client en VSCode)
+### Estado
+GET http://localhost:8000/salud
+
+### Consulta
+POST http://localhost:8000/consultar
+Content-Type: application/json
+
+{
+  "pregunta": "¿Requisitos para abrir una cuenta corriente?"
+}
+
+### Memoria corta
+GET http://localhost:8000/memoria/corto
+
+### Nota
+POST http://localhost:8000/nota
+Content-Type: application/json
+
+{
+  "titulo": "Prueba",
+  "contenido": "Nota de prueba EP2"
+}

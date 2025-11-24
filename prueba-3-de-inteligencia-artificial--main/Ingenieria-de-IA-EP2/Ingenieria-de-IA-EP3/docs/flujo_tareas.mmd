@@ -1,0 +1,16 @@
+%% docs/flujo_tareas.mmd
+sequenceDiagram
+    participant U as Usuario
+    participant API as FastAPI
+    participant PL as Planner
+    participant VS as VectorStore
+    participant LLM as LLM RAG
+    U->>API: POST /consultar (pregunta)
+    API->>PL: plan(pregunta)
+    PL->>API: [seguridad, recuperar_ctx, razonar, responder, registrar]
+    API->>VS: search_docs()
+    API->>API: reason_policy()
+    API->>LLM: RetrievalQA(query)
+    LLM-->>API: resultado + fuentes
+    API->>API: write_note()
+    API-->>U: respuesta + trazas
