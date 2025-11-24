@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 from typing import List, Optional, Dict, Any, Literal, Tuple
 from pydantic import BaseModel
@@ -8,10 +7,15 @@ import logging
 import uuid
 import json
 from datetime import datetime
+# +++ NUEVAS IMPORTACIONES PARA OBSERVABILIDAD Y METRICAS +++
+import time
+import psutil
+from prometheus_client import Counter, Histogram, Gauge
+from starlette_exporter import PrometheusMiddleware, handle_metrics
 
 # -------------------- LangChain / LLM / RAG --------------------
 # Nota: evita versiones obsoletas. Requiere:
-#   pip install fastapi uvicorn langchain langchain-community langchain-openai faiss-cpu pydantic==2.* sentence-transformers python-dotenv
+#   pip install fastapi uvicorn langchain langchain-community langchain-openai faiss-cpu pydantic==2.* sentence-transformers python-dotenv prometheus-client starlette-exporter psutil
 from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -29,12 +33,8 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 K_VECINOS = int(os.getenv("TOP_K", "4"))
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.0"))
-
 # Seguridad: NO hardcodear secretos. Usa variables de entorno:
 #   OPENAI_API_KEY=...
-#   (si usas Azure/otro endpoint, configura variables específicas del provider)
-# ------------------------------------------------------------------------------------
-# SENSIBLE: el código original traía tokens y URLs hardcodeadas. Se eliminaron para cumplir buenas prácticas.
 # ------------------------------------------------------------------------------------
 
 PALABRAS_SENSIBLES = [
@@ -45,122 +45,32 @@ PALABRAS_SENSIBLES = [
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("BancoAndinoRAG_EP2")
 
+# +++ NUEVA CONFIGURACIÓN PARA LOGGING Y RUTA UNIFICADA (EP3) +++
+NOTES_FILE = os.getenv("NOTES_FILE", "./data/notas_operacionales.jsonl")
+LOG_FILE = os.getenv("LOG_FILE", "./logs/ep3_logs.jsonl") # Ruta unificada para logs estructurados
+
 # -------------------- MODELOS API --------------------
-class SolicitudConsulta(BaseModel):
-    cliente_id: Optional[str] = None
-    canal: Optional[str] = "web"
-    pregunta: str
-
-
-class DocumentoFuente(BaseModel):
-    contenido_parcial: str
-    puntuacion: float
-    metadatos: Dict[str, Any]
-
-
-class RespuestaConsulta(BaseModel):
-    request_id: str
-    respuesta: str
-    documentos_fuente: List[DocumentoFuente]
-    planner: Dict[str, Any]  # explica etapas/decisiones
-    tooltrace: List[Dict[str, Any]]  # ejecución de herramientas
-
-
-class SolicitudNota(BaseModel):
-    titulo: str
-    contenido: str
-
+# ... (modelos existentes) ...
 
 # -------------------- UTILIDADES DE SEGURIDAD --------------------
-def contiene_informacion_sensible(texto: str) -> bool:
-    t = texto.lower()
-    return any(k in t for k in PALABRAS_SENSIBLES)
-
-
-def sanitizar(texto: str) -> str:
-    if contiene_informacion_sensible(texto):
-        return ("⚠️ Lo siento, no puedo procesar ni devolver información que contenga "
-                "datos personales sensibles. La consulta será derivada a un ejecutivo.")
-    return texto
-
+# ... (funciones existentes) ...
 
 # -------------------- DOCUMENTOS & VECTORSTORE --------------------
-def cargar_documentos_locales(carpeta: str):
-    documentos = []
-    if not os.path.exists(carpeta):
-        return documentos
-    for raiz, _, archivos in os.walk(carpeta):
-        for nombre in archivos:
-            if nombre.lower().endswith((".txt", ".md")):
-                ruta = os.path.join(raiz, nombre)
-                loader = TextLoader(ruta, encoding="utf8")
-                for doc in loader.load():
-                    doc.metadata = {**doc.metadata, "archivo_origen": nombre, "path": ruta}
-                    documentos.append(doc)
-    return documentos
-
-
-def construir_y_guardar_vectorstore(carpeta_documentos: str, ruta_guardado: str) -> FAISS:
-    logger.info("Indexando documentos desde: %s", carpeta_documentos)
-    documentos = cargar_documentos_locales(carpeta_documentos)
-    if not documentos:
-        raise RuntimeError(f"No hay documentos para indexar en: {carpeta_documentos}")
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-    trozos = splitter.split_documents(documentos)
-
-    embeddings = HuggingFaceEmbeddings(model_name=MODELO_EMBEDDING)
-    vs = FAISS.from_documents(trozos, embeddings)
-    os.makedirs(os.path.dirname(ruta_guardado), exist_ok=True)
-    vs.save_local(ruta_guardado)
-    logger.info("Índice FAISS guardado en: %s", ruta_guardado)
-    return vs
-
-
-def cargar_vectorstore_guardado(ruta_guardado: str) -> FAISS:
-    embeddings = HuggingFaceEmbeddings(model_name=MODELO_EMBEDDING)
-    # allow_dangerous_deserialization requerido por FAISS.load_local en versiones recientes
-    vs = FAISS.load_local(ruta_guardado, embeddings, allow_dangerous_deserialization=True)
-    return vs
-
+# ... (funciones existentes) ...
 
 # -------------------- PROMPTS --------------------
-PROMPT_BASE = (
-    "Eres un asistente del Banco Andino. Responde SOLO con base en normativa financiera chilena (CMF) "
-    "y documentos internos. Si no hay respuesta en las fuentes, deriva al cliente a un ejecutivo. "
-    "Sé breve y claro."
-)
-
-PROMPT_CREDITO = (
-    "Un cliente pregunta: '{question}'. Responde usando EXCLUSIVAMENTE políticas internas de crédito y plazos "
-    "del Banco Andino presentes en la base de conocimiento. No inventes. Si falta información, deriva."
-)
-
-PROMPT_APERTURA = (
-    "Un cliente consulta: '{question}'. Usa la guía oficial de apertura de productos del Banco Andino y la normativa CMF. "
-    "Enumera requisitos en viñetas. Si falta información, deriva."
-)
-
-def plantilla_para(pregunta: str) -> PromptTemplate:
-    q = pregunta.lower()
-    if any(k in q for k in ["crédito", "vencimiento", "cuota", "pago"]):
-        return PromptTemplate.from_template(PROMPT_CREDITO)
-    if any(k in q for k in ["abrir cuenta", "cuenta corriente", "requisitos para abrir", "abrir una cuenta"]):
-        return PromptTemplate.from_template(PROMPT_APERTURA)
-    return PromptTemplate.from_template(PROMPT_BASE)
-
+# ... (prompts y función existente plantilla_para) ...
 
 # -------------------- HERRAMIENTAS (IE1) --------------------
-# Tool 1: search_docs → consulta semántica en FAISS
+# Tool 1: search_docs
 def tool_search_docs(query: str, retriever, k: int = K_VECINOS) -> Tuple[str, List[Any]]:
-    # Usamos retriever para traer pasajes, devolvemos texto concatenado y docs crudos para trazas
+    # ... (cuerpo de la función existente) ...
     results = retriever.get_relevant_documents(query)
     top_docs = results[:k]
-    context = "\\n\\n".join([d.page_content for d in top_docs])
+    context = "\n\n".join([d.page_content for d in top_docs])
     return context, top_docs
 
-# Tool 2: write_note → registra notas operacionales (simulado en json)
-NOTES_FILE = os.getenv("NOTES_FILE", "./data/notas_operacionales.jsonl")
+# Tool 2: write_note
 os.makedirs(os.path.dirname(NOTES_FILE), exist_ok=True) if "/" in NOTES_FILE else None
 
 def tool_write_note(titulo: str, contenido: str) -> Dict[str, Any]:
@@ -171,74 +81,53 @@ def tool_write_note(titulo: str, contenido: str) -> Dict[str, Any]:
         "ts": datetime.utcnow().isoformat()
     }
     with open(NOTES_FILE, "a", encoding="utf8") as f:
-        f.write(json.dumps(note, ensure_ascii=False) + "\\n")
+        f.write(json.dumps(note, ensure_ascii=False) + "\n")
     return note
 
-# Tool 3: reason_policy → aplica política de decisión simple para derivar o responder
-def tool_reason_policy(pregunta: str, ctx_found: bool) -> Literal["responder", "derivar"]:
-    # regla básica: si contiene datos sensibles o no hay contexto -> derivar
-    if contiene_informacion_sensible(pregunta) or not ctx_found:
-        return "derivar"
-    return "responder"
+# Tool 3: reason_policy
+# ... (cuerpo de la función existente) ...
 
-
-# -------------------- MEMORIA (IE3: corto plazo | IE4: largo plazo) --------------------
-# Corto plazo: buffer de la conversación (en memoria)
-class ShortMemory:
-    def __init__(self, max_turns: int = 10):
-        self.buffer: List[Dict[str, str]] = []
-        self.max_turns = max_turns
-
-    def add(self, role: Literal["user", "assistant"], text: str):
-        self.buffer.append({"role": role, "text": text})
-        if len(self.buffer) > self.max_turns:
-            self.buffer = self.buffer[-self.max_turns:]
-
-    def as_text(self) -> str:
-        return "\\n".join([f"{x['role']}: {x['text']}" for x in self.buffer])
-
-
-SHORT_MEMORY = ShortMemory(max_turns=10)
-
-# Largo plazo: vectorstore FAISS (ya implementado arriba) como memoria semántica
+# -------------------- MEMORIA --------------------
+# ... (clase ShortMemory y objeto SHORT_MEMORY existente) ...
 VECTORSTORE_GLOBAL: Optional[FAISS] = None
 
-
-# -------------------- PLANNER (IE5) --------------------
-# Planificador con prioridades por intención detectada
-class TaskPlanner:
-    PRIORIDADES = {
-        "seguridad": 0,     # si hay riesgo/sensibilidad, va primero
-        "recuperar_ctx": 1, # buscar evidencia en docs
-        "razonar": 2,       # decidir derivar/responder
-        "responder": 3,     # generar respuesta
-        "registrar": 4      # escribir nota/evidencia
-    }
-
-    def plan(self, pregunta: str) -> List[str]:
-        plan = ["seguridad", "recuperar_ctx", "razonar", "responder", "registrar"]
-        # si la pregunta ya sugiere apertura de cuenta / crédito, mantenemos plan estándar
-        return sorted(plan, key=lambda p: self.PRIORIDADES[p])
-
-
-PLANNER = TaskPlanner()
-
+# -------------------- PLANNER --------------------
+# ... (clase TaskPlanner y objeto PLANNER existente) ...
 
 # -------------------- CONSTRUCCIÓN RAG --------------------
-def construir_chain_rag(vectorstore: FAISS) -> RetrievalQA:
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": K_VECINOS})
-    llm = ChatOpenAI(model=MODELO_LLM, temperature=TEMPERATURE)
-    chain = RetrievalQA.from_chain_type(
-        llm=llm, chain_type="stuff", retriever=retriever, return_source_documents=True
-    )
-    return chain
+# ... (función construir_chain_rag y objeto CHAIN_RAG_GLOBAL existente) ...
 
+# -------------------- PROMETHEUS METRICS (IE1, IE2) --------------------
+# Se inicializan las métricas para la trazabilidad y observabilidad
+rag_requests_total = Counter(
+    "rag_requests_total",
+    "Total de consultas procesadas por el agente RAG",
+    ["decision", "canal", "sensible"]
+)
 
-CHAIN_RAG_GLOBAL: Optional[RetrievalQA] = None
+rag_request_latency_seconds = Histogram(
+    "rag_request_latency_seconds",
+    "Latencia total del endpoint /consultar (segundos)",
+    buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
+)
 
+rag_llm_latency_seconds = Histogram(
+    "rag_llm_latency_seconds",
+    "Latencia del llamado al RAG/LLM (segundos)",
+    buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0)
+)
+
+# Métricas del sistema (Gauge) para uso de recursos
+system_cpu_percent = Gauge("system_cpu_percent", "Uso actual de CPU del proceso del agente")
+system_memory_percent = Gauge("system_memory_percent", "Uso actual de RAM del proceso del agente")
+PROCESS = psutil.Process(os.getpid())
 
 # -------------------- FASTAPI --------------------
-app = FastAPI(title="Banco Andino - Agente RAG (EP2)")
+app = FastAPI(title="Banco Andino - Agente RAG (EP2/EP3)")
+
+# Se agrega el middleware de Prometheus para exponer el endpoint /metrics
+app.add_middleware(PrometheusMiddleware, app_name="banco_andino_rag")
+app.add_route("/metrics", handle_metrics)
 
 @app.on_event("startup")
 async def init():
@@ -249,6 +138,9 @@ async def init():
         else:
             VECTORSTORE_GLOBAL = construir_y_guardar_vectorstore(CARPETA_DOCUMENTOS, RUTA_VECTORSTORE)
         CHAIN_RAG_GLOBAL = construir_chain_rag(VECTORSTORE_GLOBAL)
+        # +++ Asegurar la creación del directorio de logs +++
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True) if "/" in LOG_FILE else None
+        logger.info("EP3: Directorio de logs creado en: %s", os.path.dirname(LOG_FILE))
         logger.info("EP2: Sistema inicializado.")
     except Exception as e:
         logger.exception("EP2: Error inicializando: %s", e)
@@ -264,6 +156,10 @@ async def salud():
 @app.post("/consultar", response_model=RespuestaConsulta)
 async def consultar(solicitud: SolicitudConsulta):
     global CHAIN_RAG_GLOBAL, VECTORSTORE_GLOBAL
+    start_time = time.time() # Iniciar contador de latencia total
+    is_sensible = "false"
+    tokens_consumed = 0
+
     if CHAIN_RAG_GLOBAL is None or VECTORSTORE_GLOBAL is None:
         raise HTTPException(status_code=503, detail="Servicio no disponible - inicialización en curso")
 
@@ -274,14 +170,43 @@ async def consultar(solicitud: SolicitudConsulta):
 
     # Paso 1: Seguridad
     if contiene_informacion_sensible(pregunta):
+        is_sensible = "true"
+        decision = "derivar"
         planner_trace["decisiones"].append({"paso": "seguridad", "accion": "derivar_por_datos_sensibles"})
         respuesta = ("⚠️ La consulta contiene datos sensibles. Por seguridad será derivada a un ejecutivo.")
+        
         SHORT_MEMORY.add("user", pregunta)
         SHORT_MEMORY.add("assistant", respuesta)
+
+        # +++ Registro de métricas y traza final para casos sensibles +++
+        end_time = time.time()
+        latency_total = end_time - start_time
+        
+        rag_requests_total.labels(decision=decision, canal=solicitud.canal or "web", sensible=is_sensible).inc()
+        rag_request_latency_seconds.observe(latency_total)
+
+        traza = {
+            "ts": datetime.utcnow().isoformat(),
+            "request_id": req_id,
+            "cliente_id": solicitud.cliente_id,
+            "canal": solicitud.canal,
+            "pregunta": pregunta,
+            "decision": decision,
+            "latencia_total": latency_total,
+            "planner": planner_trace,
+            "tooltrace": tooltrace,
+            "short_memory_tail": SHORT_MEMORY.as_text()[-500:]
+        }
+        with open(LOG_FILE, "a", encoding="utf8") as f:
+            f.write(json.dumps(traza, ensure_ascii=False) + "\n") # Usar LOG_FILE
+        
         return RespuestaConsulta(
             request_id=req_id, respuesta=respuesta, documentos_fuente=[],
             planner=planner_trace, tooltrace=tooltrace
         )
+    
+    # +++ Asignar decisión inicial para el path "No sensible" +++
+    decision = "responder" 
 
     # Paso 2: Recuperar contexto (tool_search_docs)
     retriever = VECTORSTORE_GLOBAL.as_retriever(search_type="similarity", search_kwargs={"k": K_VECINOS})
@@ -296,12 +221,18 @@ async def consultar(solicitud: SolicitudConsulta):
     # Paso 4: Generar respuesta (si aplica)
     documentos_fuente: List[DocumentoFuente] = []
     respuesta_texto = ""
+    llm_start_time = None
+
     if decision == "responder":
         plantilla = plantilla_para(pregunta)
         prompt = plantilla.format(question=pregunta)
         try:
+            llm_start_time = time.time()
             # Usamos CHAIN_RAG para fundamentar en fuentes
             resultado = CHAIN_RAG_GLOBAL({"query": pregunta})
+            llm_end_time = time.time()
+            rag_llm_latency_seconds.observe(llm_end_time - llm_start_time) # Registrar latencia LLM
+
             salida = resultado.get("result") if isinstance(resultado, dict) else str(resultado)
             src_docs = resultado.get("source_documents", []) if isinstance(resultado, dict) else []
 
@@ -316,6 +247,8 @@ async def consultar(solicitud: SolicitudConsulta):
                 )
 
             tooltrace.append({"tool": "llm_rag", "ok": True})
+            # Estimación simple de tokens consumidos
+            tokens_consumed = len(pregunta.split()) + len(respuesta_texto.split()) + len(contexto.split())
         except Exception as e:
             logger.exception("Error generando respuesta RAG: %s", e)
             respuesta_texto = ("Ocurrió un error al procesar la consulta. Será derivada a un ejecutivo.")
@@ -340,7 +273,19 @@ async def consultar(solicitud: SolicitudConsulta):
     SHORT_MEMORY.add("user", pregunta)
     SHORT_MEMORY.add("assistant", respuesta_texto)
 
-    # Trazas en archivo (auditoría)
+    # +++ Instrumentación final (Prometheus y JSONL) +++
+    end_time = time.time()
+    latency_total = end_time - start_time
+    
+    # 1. Prometheus
+    rag_requests_total.labels(decision=decision, canal=solicitud.canal or "web", sensible=is_sensible).inc()
+    rag_request_latency_seconds.observe(latency_total)
+    
+    # System metrics
+    system_cpu_percent.set(PROCESS.cpu_percent(interval=None))
+    system_memory_percent.set(PROCESS.memory_percent())
+
+    # 2. Trazas en archivo (auditoría)
     traza = {
         "ts": datetime.utcnow().isoformat(),
         "request_id": req_id,
@@ -348,12 +293,14 @@ async def consultar(solicitud: SolicitudConsulta):
         "canal": solicitud.canal,
         "pregunta": pregunta,
         "decision": decision,
+        "latencia_total": latency_total,
+        "tokens": tokens_consumed,
         "planner": planner_trace,
         "tooltrace": tooltrace,
         "short_memory_tail": SHORT_MEMORY.as_text()[-500:]
     }
-    with open("traces_ep2.log", "a", encoding="utf8") as f:
-        f.write(json.dumps(traza, ensure_ascii=False) + "\\n")
+    with open(LOG_FILE, "a", encoding="utf8") as f: # Usar LOG_FILE
+        f.write(json.dumps(traza, ensure_ascii=False) + "\n")
 
     return RespuestaConsulta(
         request_id=req_id,
@@ -367,6 +314,7 @@ async def consultar(solicitud: SolicitudConsulta):
 # Endpoint para registrar notas manualmente (herramienta de escritura) – evidencia IE1
 @app.post("/nota")
 async def crear_nota(nota: SolicitudNota):
+# ... (cuerpo de la función existente) ...
     try:
         created = tool_write_note(nota.titulo, nota.contenido)
         return {"ok": True, "note": created}
@@ -377,9 +325,10 @@ async def crear_nota(nota: SolicitudNota):
 # Endpoint para inspeccionar breve estado de memoria corta – evidencia IE3
 @app.get("/memoria/corto")
 async def memoria_corto():
+# ... (cuerpo de la función existente) ...
     return {"turns": SHORT_MEMORY.buffer}
 
 # ------------------------------------------------------------------------------------
 # Dev server:
-# uvicorn app_ep2:app --host 0.0.0.0 --port 8000 --reload
+# uvicorn app_ep3:app --host 0.0.0.0 --port 8000 --reload
 # ------------------------------------------------------------------------------------
